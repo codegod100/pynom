@@ -7,4 +7,4 @@ dist/
 .eggs/
 build/
 .ruff_cache/
-.mypy_cache/
+.mypy_cache/result
