@@ -284,5 +284,10 @@ class StreamDisplay:
                 state = current_state
                 self.display.update(live, state)
         
-        self.display.print_final(state)
+        # Live display already shows final state, just print summary line
+        if state.error:
+            self.console.print(f"\n[bold red]Build failed![/]")
+        elif state.finished_at:
+            self.console.print(f"\n[bold green]Build completed in {self.display.format_time(state.total_time_seconds)}[/]")
+        
         return state
