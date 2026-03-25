@@ -41,6 +41,7 @@ class Dependency:
     size: Optional[int] = None  # Size in bytes (for downloads)
     downloaded: int = 0  # Bytes downloaded so far
     log_lines: list[str] = field(default_factory=list)  # Build output lines
+    builder: Optional[str] = None  # Builder name (local, ssh://..., etc)
     
     @property
     def status_text(self) -> str:

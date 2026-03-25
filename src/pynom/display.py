@@ -77,18 +77,20 @@ class BuildDisplay:
             if dep:
                 elapsed = dep.elapsed_seconds or 0
                 predicted = self.history.get_average_time(name)
+                builder = f" [{dep.builder}]" if dep.builder else ""
+                label = f"  [yellow]{name[:25]}{builder}[/]"
                 
                 if predicted and predicted > 0:
                     pct = min(elapsed / predicted, 0.99)  # Cap at 99% while running
                     progress.add_task(
-                        f"  [yellow]{name[:30]}[/]",
+                        label,
                         total=100,
                         completed=int(pct * 100),
                     )
                 else:
                     # No prediction, show indeterminate
                     progress.add_task(
-                        f"  [yellow]{name[:30]}[/]",
+                        label,
                         total=None,
                     )
         

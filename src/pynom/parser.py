@@ -43,20 +43,31 @@ class NixParser:
         is_json = line.startswith('@nix') or line.startswith('{')
         
         if not is_json:
-            status_patterns = [
-                r"connecting to",
-                r"copying \d+ paths?",
-                r"copying path",
-                r"this derivation will be built",
-                r"building '.*' on",
-            ]
-            for pattern in status_patterns:
-                if re.search(pattern, line.lower()):
-                    # Clean up the line for display
-                    clean = line.strip()
-                    if clean and len(clean) < 100:  # Avoid very long lines
-                        self.state.status_message = clean
-                    break
+            # Check for builder info: building '...' on 'ssh://...'
+            builder_match = re.search(r"building '.*' on '([^']+)'", line)
+            if builder_match:
+                builder = builder_match.group(1)
+                # Extract derivation name
+                drv_match = re.search(r"building '(/nix/store/[^']+)'", line)
+                if drv_match:
+                    drv_path = drv_match.group(1)
+                    name = self._extract_name(drv_path)
+                    if name in self.state.dependencies:
+                        self.state.dependencies[name].builder = builder
+                    self.state.status_message = f"Building {name} on {builder}"
+            else:
+                status_patterns = [
+                    r"connecting to",
+                    r"copying \d+ paths?",
+                    r"copying path",
+                    r"this derivation will be built",
+                ]
+                for pattern in status_patterns:
+                    if re.search(pattern, line.lower()):
+                        clean = line.strip()
+                        if clean and len(clean) < 100:
+                            self.state.status_message = clean
+                        break
         
         if self.use_json:
             return self._parse_json_line(line)
