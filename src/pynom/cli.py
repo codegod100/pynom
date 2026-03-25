@@ -21,6 +21,8 @@ Examples:
   pynom build .#my-package        Build a flake package
   pynom shell nixpkgs#hello       Enter a shell with hello
   pynom develop                   Enter a dev shell
+  pynom home switch .#user        Home-manager switch
+  pynom os switch .#hostname      NixOS system switch
   nix-build 2>&1 | pynom          Pipe old-style output
   nix build . --log-format internal-json -v 2>&1 | pynom --json
 """,
@@ -74,22 +76,44 @@ Examples:
     profile_parser = subparsers.add_parser("profile", help="Manage a profile (like nix profile)")
     profile_parser.add_argument("args", nargs=argparse.REMAINDER, help="Arguments for nix profile")
     
+    # home (home-manager)
+    home_parser = subparsers.add_parser("home", help="Home-manager operations (like nh home)")
+    home_parser.add_argument("args", nargs=argparse.REMAINDER, help="Arguments for home-manager")
+    
+    # os (nixos-rebuild)
+    os_parser = subparsers.add_parser("os", help="NixOS system operations (like nh os)")
+    os_parser.add_argument("args", nargs=argparse.REMAINDER, help="Arguments for nixos-rebuild")
+    
     return parser
 
 
 def run_nix_command(command: str, args: list[str], use_json: bool = True) -> int:
     """Run a nix command with monitoring."""
-    nix_args = [command, *args]
     
-    # Add JSON logging for supported commands
-    if use_json and command in ("build", "shell", "develop", "run", "profile"):
-        # Use internal-json for rich output
-        if "--log-format" not in args:
-            nix_args.extend(["--log-format", "internal-json", "-v"])
+    # Handle special commands
+    if command == "home":
+        # home-manager command
+        cmd = ["home-manager"]
+        if use_json and "--log-format" not in args:
+            cmd.extend(["--log-format", "internal-json", "-v"])
+        cmd.extend(args)
+    elif command == "os":
+        # nixos-rebuild (needs sudo)
+        cmd = ["sudo", "nixos-rebuild"]
+        if use_json and "--log-format" not in args:
+            cmd.extend(["--log-format", "internal-json", "-v"])
+        cmd.extend(args)
+    else:
+        # Regular nix command
+        cmd = ["nix", command]
+        if use_json and command in ("build", "shell", "develop", "run", "profile"):
+            if "--log-format" not in args:
+                cmd.extend(["--log-format", "internal-json", "-v"])
+        cmd.extend(args)
     
-    # Run nix with output capture
+    # Run with output capture
     proc = subprocess.Popen(
-        ["nix"] + nix_args,
+        cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
