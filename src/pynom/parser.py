@@ -43,18 +43,15 @@ class NixParser:
         is_json = line.startswith('@nix') or line.startswith('{')
         
         if not is_json:
-            # Check for builder info: building '...' on 'ssh://...'
-            builder_match = re.search(r"building '.*' on '([^']+)'", line)
+            # Check for builder info: "checking outputs of '...' on 'ssh://...'"
+            # or "building '...' on 'ssh://...'"
+            builder_match = re.search(r"(?:checking outputs of|building) '(/nix/store/[^']+)' on '([^']+)'", line)
             if builder_match:
-                builder = builder_match.group(1)
-                # Extract derivation name
-                drv_match = re.search(r"building '(/nix/store/[^']+)'", line)
-                if drv_match:
-                    drv_path = drv_match.group(1)
-                    name = self._extract_name(drv_path)
-                    if name in self.state.dependencies:
-                        self.state.dependencies[name].builder = builder
-                    self.state.status_message = f"Building {name} on {builder}"
+                drv_path, builder = builder_match.groups()
+                name = self._extract_name(drv_path)
+                if name in self.state.dependencies:
+                    self.state.dependencies[name].builder = builder
+                self.state.status_message = f"Building {name} on {builder}"
             else:
                 status_patterns = [
                     r"connecting to",
@@ -181,6 +178,15 @@ class NixParser:
         if fields and isinstance(fields[0], str) and fields[0].endswith('.drv'):
             path = fields[0]
             name = self._extract_name(path)
+            # fields[1] contains builder URL if remote (e.g., ssh://user@host)
+            builder = None
+            if len(fields) > 1 and isinstance(fields[1], str) and '://' in fields[1]:
+                # Extract just the hostname from ssh://user@host
+                builder_url = fields[1]
+                if '@' in builder_url:
+                    builder = builder_url.split('@')[-1].rstrip('/')
+                else:
+                    builder = builder_url.split('://')[-1].rstrip('/')
             
             dep = Dependency(
                 name=name,
@@ -188,6 +194,7 @@ class NixParser:
                 status=BuildStatus.RUNNING,
                 activity_type=ActivityType.BUILD,
                 started_at=datetime.now(),
+                builder=builder,
             )
             self.state.add_dependency(dep)
             self._activity_map[activity_id] = name
