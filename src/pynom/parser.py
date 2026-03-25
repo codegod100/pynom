@@ -38,6 +38,26 @@ class NixParser:
         # Store raw line for pass-through
         self.state.raw_lines.append(line)
         
+        # Detect status messages from non-JSON lines (connecting, copying, etc.)
+        # Skip JSON lines for status detection
+        is_json = line.startswith('@nix') or line.startswith('{')
+        
+        if not is_json:
+            status_patterns = [
+                r"connecting to",
+                r"copying \d+ paths?",
+                r"copying path",
+                r"this derivation will be built",
+                r"building '.*' on",
+            ]
+            for pattern in status_patterns:
+                if re.search(pattern, line.lower()):
+                    # Clean up the line for display
+                    clean = line.strip()
+                    if clean and len(clean) < 100:  # Avoid very long lines
+                        self.state.status_message = clean
+                    break
+        
         if self.use_json:
             return self._parse_json_line(line)
         else:
@@ -256,7 +276,18 @@ class NixParser:
         # Track evaluation activities
         if "evaluating" in text.lower():
             self._activity_type_map[activity_id] = ActivityType.BUILD
+            # Extract what's being evaluated for status
+            if "derivation" in text.lower():
+                match = re.search(r"'([^']+)'", text)
+                if match:
+                    deriv = match.group(1).split('/')[-1][:30]
+                    self.state.status_message = f"Evaluating {deriv}..."
             return None  # Don't show evaluation, too noisy
+        
+        # Track querying activities
+        if "querying" in text.lower():
+            self.state.status_message = "Querying cache..."
+            return None
         
         return None
     
@@ -331,6 +362,11 @@ class NixParser:
         """Handle msg JSON message."""
         level = data.get("level", 4)
         msg = data.get("msg", "")
+        
+        # Set status message for certain activities
+        if msg and "evaluating" in msg.lower():
+            self.state.status_message = "Evaluating..."
+            return None
         
         # Level 0 = error, level 1-3 = warnings
         if level <= 0 and msg:

@@ -146,7 +146,11 @@ class BuildDisplay:
             # Build finished but no tracked items (cached or fast)
             content = "[dim]Build completed (cached or no builds tracked)[/]"
         elif total_tasks == 0 and not state.error:
-            content = "[dim]Waiting for build output...[/]"
+            # Show status message or waiting
+            if state.status_message:
+                content = f"[dim]{state.status_message}[/]"
+            else:
+                content = "[dim]Waiting for build output...[/]"
         else:
             # Build content with progress bar
             from rich.layout import Layout
@@ -158,6 +162,10 @@ class BuildDisplay:
             # Add progress renderable
             if total_tasks > 0 or running_tasks > 0:
                 content_table.add_row(progress)
+                content_table.add_row("")
+            elif state.status_message:
+                # Show status when no builds running yet
+                content_table.add_row(Text.from_markup(f"[dim]{state.status_message}[/]"))
                 content_table.add_row("")
             
             # Add text lines

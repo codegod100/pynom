@@ -53,6 +53,7 @@
               textual
             ]))
             pkgs.uv
+            pkgs.just
           ];
         };
       });

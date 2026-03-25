@@ -77,6 +77,7 @@ class BuildState:
     started_at: datetime = field(default_factory=datetime.now)
     finished_at: Optional[datetime] = None
     error: Optional[str] = None
+    status_message: Optional[str] = None  # Current status like "connecting to..."
     
     # Track builds in progress
     running_builds: set[str] = field(default_factory=set)
