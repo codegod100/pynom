@@ -70,6 +70,10 @@ Examples:
     run_parser = subparsers.add_parser("run", help="Run an app (like nix run)")
     run_parser.add_argument("args", nargs=argparse.REMAINDER, help="Arguments for nix run")
     
+    # profile
+    profile_parser = subparsers.add_parser("profile", help="Manage a profile (like nix profile)")
+    profile_parser.add_argument("args", nargs=argparse.REMAINDER, help="Arguments for nix profile")
+    
     return parser
 
 
@@ -78,7 +82,7 @@ def run_nix_command(command: str, args: list[str], use_json: bool = True) -> int
     nix_args = [command, *args]
     
     # Add JSON logging for supported commands
-    if use_json and command in ("build", "shell", "develop", "run"):
+    if use_json and command in ("build", "shell", "develop", "run", "profile"):
         # Use internal-json for rich output
         if "--log-format" not in args:
             nix_args.extend(["--log-format", "internal-json", "-v"])
