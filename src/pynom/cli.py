@@ -89,20 +89,39 @@ Examples:
 
 def run_nix_command(command: str, args: list[str], use_json: bool = True) -> int:
     """Run a nix command with monitoring."""
+    import socket
     
     # Handle special commands
     if command == "home":
-        # home-manager command
-        cmd = ["home-manager"]
-        if use_json and "--log-format" not in args:
+        # home-manager with flake auto-detection
+        # args[0] is the subcommand (switch, build, etc) or empty
+        subcmd = args[0] if args else "switch"
+        cmd = ["home-manager", subcmd]
+        rest_args = args[1:] if args else []
+        
+        if "--flake" not in rest_args:
+            # Auto-detect: use current directory and username
+            flake_arg = f".#{os.environ.get('USER', 'default')}"
+            cmd.extend(["--flake", flake_arg])
+        if use_json and "--log-format" not in rest_args:
             cmd.extend(["--log-format", "internal-json", "-v"])
-        cmd.extend(args)
+        cmd.extend(rest_args)
+        
     elif command == "os":
-        # nixos-rebuild (needs sudo)
-        cmd = ["sudo", "nixos-rebuild"]
-        if use_json and "--log-format" not in args:
+        # nixos-rebuild with flake auto-detection
+        subcmd = args[0] if args else "switch"
+        cmd = ["sudo", "nixos-rebuild", subcmd]
+        rest_args = args[1:] if args else []
+        
+        if "--flake" not in rest_args:
+            # Auto-detect: use current directory and hostname
+            hostname = socket.gethostname().split('.')[0]
+            flake_arg = f".#{hostname}"
+            cmd.extend(["--flake", flake_arg])
+        if use_json and "--log-format" not in rest_args:
             cmd.extend(["--log-format", "internal-json", "-v"])
-        cmd.extend(args)
+        cmd.extend(rest_args)
+        
     else:
         # Regular nix command
         cmd = ["nix", command]
