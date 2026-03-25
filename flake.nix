@@ -53,7 +53,6 @@
               textual
             ]))
             pkgs.uv
-            pkgs.hatch
           ];
         };
       });
