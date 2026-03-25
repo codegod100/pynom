@@ -124,8 +124,8 @@ class NixParser:
             
             return line  # Pass through the output path
         
-        # Check for errors
-        if self.ERROR_RE.search(line):
+        # Check for errors (must start with error: or contain "failed" in specific patterns)
+        if line.lower().startswith("error:") or "builder for " in line.lower() and "failed" in line.lower():
             # Mark current builds as failed
             for name in list(self.state.running_builds):
                 self.state.update_status(name, BuildStatus.FAILED)
@@ -209,16 +209,22 @@ class NixParser:
                 path = match.group(1)
                 name = self._extract_name(path)
                 
-                dep = Dependency(
-                    name=name,
-                    out_path=path,
-                    status=BuildStatus.RUNNING,
-                    activity_type=ActivityType.BUILD,
-                    started_at=datetime.now(),
-                )
-                self.state.add_dependency(dep)
-                self._activity_map[activity_id] = name
-                self._activity_type_map[activity_id] = ActivityType.BUILD
+                # Only create if not already tracked
+                if name not in self.state.dependencies:
+                    dep = Dependency(
+                        name=name,
+                        out_path=path,
+                        status=BuildStatus.RUNNING,
+                        activity_type=ActivityType.BUILD,
+                        started_at=datetime.now(),
+                    )
+                    self.state.add_dependency(dep)
+                    self._activity_map[activity_id] = name
+                    self._activity_type_map[activity_id] = ActivityType.BUILD
+                else:
+                    # Already tracked, just map the activity id
+                    self._activity_map[activity_id] = name
+                    self._activity_type_map[activity_id] = ActivityType.BUILD
                 return f"Building {name}"
         
         elif "downloading" in text.lower() or "fetching" in text.lower():
@@ -234,14 +240,16 @@ class NixParser:
             if path:
                 name = self._extract_name(path)
                 
-                dep = Dependency(
-                    name=name,
-                    out_path=path if path.startswith('/nix/store') else None,
-                    status=BuildStatus.RUNNING,
-                    activity_type=ActivityType.DOWNLOAD,
-                    started_at=datetime.now(),
-                )
-                self.state.add_dependency(dep)
+                # Only create if not already tracked
+                if name not in self.state.dependencies:
+                    dep = Dependency(
+                        name=name,
+                        out_path=path if path.startswith('/nix/store') else None,
+                        status=BuildStatus.RUNNING,
+                        activity_type=ActivityType.DOWNLOAD,
+                        started_at=datetime.now(),
+                    )
+                    self.state.add_dependency(dep)
                 self._activity_map[activity_id] = name
                 self._activity_type_map[activity_id] = ActivityType.DOWNLOAD
                 return f"Downloading {name}"
@@ -400,8 +408,9 @@ class NixParser:
             self.state.status_message = "Evaluating..."
             return None
         
-        # Level 0 = error, level 1-3 = warnings
-        if level <= 0 and msg:
+        # Level 0 = error, level 1-3 = warnings  
+        # Only set error if it's a real error message
+        if level <= 0 and msg and ("error:" in msg.lower() or "failed" in msg.lower()):
             self.state.error = msg
             return f"ERROR: {msg}"
         

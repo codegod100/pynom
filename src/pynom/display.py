@@ -52,11 +52,11 @@ class BuildDisplay:
         """Render the build state as a rich panel with progress bars."""
         # Create progress bars
         progress = Progress(
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(bar_width=40),
+            TextColumn("{task.description}", justify="left"),
+            BarColumn(bar_width=25),
             TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
             TimeElapsedColumn(),
-            expand=False,
+            expand=True,
         )
         
         # Overall build progress
@@ -77,7 +77,11 @@ class BuildDisplay:
             if dep:
                 elapsed = dep.elapsed_seconds or 0
                 predicted = self.history.get_average_time(name)
-                builder = f" [{dep.builder}]" if dep.builder else ""
+                # Escape brackets in builder name for Rich markup
+                if dep.builder:
+                    builder = f" \\[{dep.builder}\\]"
+                else:
+                    builder = ""
                 label = f"  [yellow]{name[:25]}{builder}[/]"
                 
                 if predicted and predicted > 0:
@@ -155,7 +159,12 @@ class BuildDisplay:
             lines.append("[dim]Completed:[/]")
             for dep, depth in completed:
                 duration = f" {self.format_time(dep.duration_seconds)}" if dep.duration_seconds else ""
-                lines.append(f"  [dim]{dep.name}{duration}[/]")
+                # Escape brackets in builder name for Rich markup
+                if dep.builder:
+                    builder = f" \\[{dep.builder}\\]"
+                else:
+                    builder = ""
+                lines.append(f"  [dim]{dep.name}{builder}{duration}[/]")
         
         # Error display
         if state.error:
