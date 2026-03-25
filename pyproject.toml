@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pynom"
+version = "0.1.0"
+description = "Python clone of nix-output-monitor - beautiful Nix build output"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "nandi" }]
+dependencies = [
+    "rich>=13.0.0",
+    "textual>=0.47.0",
+]
+
+[project.scripts]
+pynom = "pynom.cli:main"
+pynom-build = "pynom.cli:nom_build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pynom"]
