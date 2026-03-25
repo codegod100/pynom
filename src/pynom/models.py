@@ -76,6 +76,7 @@ class BuildState:
     """Overall state of a Nix build."""
     dependencies: dict[str, Dependency] = field(default_factory=dict)
     raw_lines: list[str] = field(default_factory=list)
+    recent_events: list[str] = field(default_factory=list)
     started_at: datetime = field(default_factory=datetime.now)
     finished_at: Optional[datetime] = None
     error: Optional[str] = None
@@ -129,6 +130,8 @@ class BuildState:
         
         dep = self.dependencies[name]
         old_status = dep.status
+        if old_status == status:
+            return
         dep.status = status
         
         if finished_at:
@@ -171,6 +174,17 @@ class BuildState:
             visit(root.name, 0)
         
         return result
+
+    def add_event(self, event: str) -> None:
+        """Record a short user-visible event for the TUI."""
+        event = event.strip()
+        if not event:
+            return
+        if event in self.recent_events[-4:]:
+            return
+        self.recent_events.append(event)
+        if len(self.recent_events) > 12:
+            self.recent_events = self.recent_events[-12:]
 
 
 @dataclass

@@ -87,7 +87,51 @@ Examples:
     return parser
 
 
-def run_nix_command(command: str, args: list[str], use_json: bool = True) -> int:
+def find_home_manager_flake() -> str:
+    """Find home-manager flake directory."""
+    # Check current directory first
+    if os.path.exists("flake.nix"):
+        # Check if it has homeConfigurations
+        result = subprocess.run(
+            ["nix", "flake", "show", "--json"],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0 and "homeConfigurations" in result.stdout:
+            return "."
+    
+    # Fall back to ~/.config/home-manager
+    hm_dir = os.path.expanduser("~/.config/home-manager")
+    if os.path.exists(os.path.join(hm_dir, "flake.nix")):
+        return hm_dir
+    
+    # Last resort: current directory
+    return "."
+
+def find_nixos_flake() -> str:
+    """Find NixOS configuration flake directory."""
+    # Check current directory first
+    if os.path.exists("flake.nix"):
+        result = subprocess.run(
+            ["nix", "flake", "show", "--json"],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0 and "nixosConfigurations" in result.stdout:
+            return "."
+    
+    # Fall back to /etc/nixos
+    if os.path.exists("/etc/nixos/flake.nix"):
+        return "/etc/nixos"
+    
+    return "."
+
+
+def run_nix_command(
+    command: str,
+    args: list[str],
+    use_json: bool = True,
+    use_tui: bool = True,
+    show_pass_through: bool = True,
+) -> int:
     """Run a nix command with monitoring."""
     import socket
     
@@ -100,8 +144,9 @@ def run_nix_command(command: str, args: list[str], use_json: bool = True) -> int
         rest_args = args[1:] if args else []
         
         if "--flake" not in rest_args:
-            # Auto-detect: use current directory and username
-            flake_arg = f".#{os.environ.get('USER', 'default')}"
+            # Auto-detect: find flake with homeConfigurations
+            flake_dir = find_home_manager_flake()
+            flake_arg = f"{flake_dir}#{os.environ.get('USER', 'default')}"
             cmd.extend(["--flake", flake_arg])
         if use_json and "--log-format" not in rest_args:
             cmd.extend(["--log-format", "internal-json", "-v"])
@@ -114,9 +159,10 @@ def run_nix_command(command: str, args: list[str], use_json: bool = True) -> int
         rest_args = args[1:] if args else []
         
         if "--flake" not in rest_args:
-            # Auto-detect: use current directory and hostname
+            # Auto-detect: find flake with nixosConfigurations
+            flake_dir = find_nixos_flake()
             hostname = socket.gethostname().split('.')[0]
-            flake_arg = f".#{hostname}"
+            flake_arg = f"{flake_dir}#{hostname}"
             cmd.extend(["--flake", flake_arg])
         if use_json and "--log-format" not in rest_args:
             cmd.extend(["--log-format", "internal-json", "-v"])
@@ -145,9 +191,11 @@ def run_nix_command(command: str, args: list[str], use_json: bool = True) -> int
         bufsize=1,  # Line buffered
     )
     
-    # Display with TUI
-    display = StreamDisplay(show_pass_through=False, use_json=use_json)
-    state = display.run_with_tui(proc.stdout)
+    display = StreamDisplay(show_pass_through=show_pass_through, use_json=use_json)
+    if use_tui:
+        state = display.run_with_tui(proc.stdout)
+    else:
+        state = display.run(proc.stdout)
     
     return proc.wait()
 
@@ -180,7 +228,13 @@ def main() -> NoReturn:
     # Check if we're in drop-in mode (subcommand given) or pipe mode
     if args.command:
         # Drop-in replacement mode
-        exit_code = run_nix_command(args.command, args.args or [])
+        exit_code = run_nix_command(
+            args.command,
+            args.args or [],
+            use_json=True,
+            use_tui=True,
+            show_pass_through=args.pass_through,
+        )
         sys.exit(exit_code)
     else:
         # Check if stdin has data (pipe mode) or if we should run nix directly

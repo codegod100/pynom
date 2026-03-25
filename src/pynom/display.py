@@ -48,7 +48,12 @@ class BuildDisplay:
             bytes_val /= 1024
         return f"{bytes_val:.1f}TB"
     
-    def render_state(self, state: BuildState) -> Panel:
+    def render_state(
+        self,
+        state: BuildState,
+        show_inline_logs: bool = True,
+        show_recent_events: bool = True,
+    ) -> Panel:
         """Render the build state as a rich panel with progress bars."""
         # Create progress bars
         progress = Progress(
@@ -129,25 +134,38 @@ class BuildDisplay:
             
             lines.append(" ".join(status_parts))
             lines.append("")
+
+        if state.status_message:
+            lines.append(f"[dim]{state.status_message}[/]")
+            lines.append("")
+
+        recent_events = state.recent_events[-8:]
+        if show_recent_events and recent_events:
+            lines.append("[dim]Recent activity:[/]")
+            for event in recent_events:
+                display_event = event[:90] if len(event) > 90 else event
+                lines.append(f"  [dim]{display_event}[/]")
+            lines.append("")
         
         # Recent log lines from running builds
-        log_lines_shown = 0
-        max_log_lines = 15
-        for name in sorted(state.running_builds):
-            dep = state.dependencies.get(name)
-            if dep and dep.log_lines:
-                # Show last few log lines
-                recent_logs = dep.log_lines[-8:]
-                for log in recent_logs:
-                    if log_lines_shown >= max_log_lines:
-                        break
-                    # Truncate long lines
-                    display_log = log[:70] if len(log) > 70 else log
-                    lines.append(f"  [dim]{display_log}[/]")
-                    log_lines_shown += 1
-        
-        if log_lines_shown > 0:
-            lines.append("")
+        if show_inline_logs:
+            log_lines_shown = 0
+            max_log_lines = 15
+            for name in sorted(state.running_builds):
+                dep = state.dependencies.get(name)
+                if dep and dep.log_lines:
+                    # Show last few log lines
+                    recent_logs = dep.log_lines[-8:]
+                    for log in recent_logs:
+                        if log_lines_shown >= max_log_lines:
+                            break
+                        # Truncate long lines
+                        display_log = log[:70] if len(log) > 70 else log
+                        lines.append(f"  [dim]{display_log}[/]")
+                        log_lines_shown += 1
+            
+            if log_lines_shown > 0:
+                lines.append("")
         
         # Recent completions (last 5)
         completed = [
@@ -175,15 +193,8 @@ class BuildDisplay:
         if state.finished_at and total_tasks == 0:
             # Build finished but no tracked items (cached or fast)
             content = "[dim]Build completed (cached or no builds tracked)[/]"
-        elif total_tasks == 0 and not state.error:
-            # Show status message or waiting
-            if state.status_message:
-                content = f"[dim]{state.status_message}[/]"
-            else:
-                content = "[dim]Waiting for build output...[/]"
         else:
             # Build content with progress bar
-            from rich.layout import Layout
             from rich.text import Text
             
             content_table = Table.grid(padding=0)
@@ -193,10 +204,10 @@ class BuildDisplay:
             if total_tasks > 0 or running_tasks > 0:
                 content_table.add_row(progress)
                 content_table.add_row("")
-            elif state.status_message:
-                # Show status when no builds running yet
-                content_table.add_row(Text.from_markup(f"[dim]{state.status_message}[/]"))
-                content_table.add_row("")
+            elif not lines:
+                # No tracked activity yet
+                waiting = state.status_message or "Waiting for build output..."
+                content_table.add_row(Text.from_markup(f"[dim]{waiting}[/]"))
             
             # Add text lines
             for line in lines:
@@ -228,6 +239,7 @@ class BuildDisplay:
             console=self.console,
             refresh_per_second=20,
             transient=False,
+            vertical_overflow="visible",
         )
         live.start()
         try:
@@ -235,14 +247,24 @@ class BuildDisplay:
         finally:
             live.stop()
     
-    def update(self, live: Live, state: BuildState) -> None:
+    def update(
+        self,
+        live: Live,
+        state: BuildState,
+        show_inline_logs: bool = True,
+        show_recent_events: bool = True,
+    ) -> None:
         """Update the live display with current state."""
         now = time.time()
         if now - self._last_render_time < self._render_interval:
             return
         self._last_render_time = now
         
-        panel = self.render_state(state)
+        panel = self.render_state(
+            state,
+            show_inline_logs=show_inline_logs,
+            show_recent_events=show_recent_events,
+        )
         live.update(panel)
     
     def print_final(self, state: BuildState) -> None:
@@ -287,11 +309,35 @@ class StreamDisplay:
         from pynom.parser import parse_stream
         
         state = BuildState()
+        printed_log_counts: dict[str, int] = {}
+        printed_event_count = 0
         
         with self.display.live_display() as live:
             for output_text, current_state in parse_stream(stream, use_json=self.use_json):
                 state = current_state
-                self.display.update(live, state)
+
+                new_events = state.recent_events[printed_event_count:]
+                for event in new_events:
+                    live.console.print(event)
+                printed_event_count = len(state.recent_events)
+                
+                # Print build logs above the live panel once so they stay in scrollback.
+                for name in sorted(state.dependencies):
+                    dep = state.dependencies[name]
+                    if not dep.log_lines:
+                        continue
+                    printed = printed_log_counts.get(name, 0)
+                    new_lines = dep.log_lines[printed:]
+                    for log_line in new_lines:
+                        live.console.print(f"[dim]{name}[/] {log_line}")
+                    printed_log_counts[name] = len(dep.log_lines)
+                
+                self.display.update(
+                    live,
+                    state,
+                    show_inline_logs=False,
+                    show_recent_events=False,
+                )
         
         # Live display already shows final state, just print summary line
         if state.error:

@@ -30,6 +30,39 @@ class NixParser:
         self._activity_map: dict[int, str] = {}  # activity id -> derivation name
         self._activity_type_map: dict[int, ActivityType] = {}  # activity id -> type
         self._result_data: dict[int, dict] = {}  # activity id -> result data for downloads
+        self._pending_builders: dict[str, str] = {}  # dep name -> builder host/name
+
+    def _should_track_activity(
+        self,
+        name: str,
+        activity_type: ActivityType,
+        out_path: Optional[str] = None,
+    ) -> bool:
+        """Return True when an activity should create a visible tracked event."""
+        existing = self.state.dependencies.get(name)
+        if not existing:
+            return True
+        if existing.activity_type != activity_type:
+            return True
+        if out_path and existing.out_path and existing.out_path != out_path:
+            return True
+        if existing.status in (BuildStatus.RUNNING, BuildStatus.DONE):
+            return False
+        return True
+
+    def _is_structured_event(self, message: str) -> bool:
+        """Return True for short synthetic events suitable for the live box."""
+        prefixes = (
+            "Building ",
+            "Downloading ",
+            "Fetching ",
+            "Copying ",
+            "DL done ",
+            "UP done ",
+            "done ",
+            "ERROR: ",
+        )
+        return message.startswith(prefixes)
     
     def parse_line(self, line: str) -> Optional[str]:
         """Parse a line of nix output, return text to display."""
@@ -49,9 +82,12 @@ class NixParser:
             if builder_match:
                 drv_path, builder = builder_match.groups()
                 name = self._extract_name(drv_path)
+                normalized_builder = self._normalize_builder(builder)
                 if name in self.state.dependencies:
-                    self.state.dependencies[name].builder = builder
-                self.state.status_message = f"Building {name} on {builder}"
+                    self.state.dependencies[name].builder = normalized_builder
+                else:
+                    self._pending_builders[name] = normalized_builder
+                self.state.status_message = f"Building {name} on {normalized_builder}"
             else:
                 status_patterns = [
                     r"connecting to",
@@ -67,9 +103,14 @@ class NixParser:
                         break
         
         if self.use_json:
-            return self._parse_json_line(line)
+            result = self._parse_json_line(line)
         else:
-            return self._parse_human_line(line)
+            result = self._parse_human_line(line)
+        
+        if result and self._is_structured_event(result):
+            self.state.add_event(result)
+        
+        return result
     
     def _parse_human_line(self, line: str) -> Optional[str]:
         """Parse human-readable nix-build output."""
@@ -85,6 +126,7 @@ class NixParser:
                     out_path=path,
                     status=BuildStatus.RUNNING,
                     started_at=datetime.now(),
+                    builder=self._pending_builders.pop(name, None),
                 )
                 self.state.add_dependency(dep)
                 self.state.running_builds.add(name)
@@ -181,25 +223,22 @@ class NixParser:
             # fields[1] contains builder URL if remote (e.g., ssh://user@host)
             builder = None
             if len(fields) > 1 and isinstance(fields[1], str) and '://' in fields[1]:
-                # Extract just the hostname from ssh://user@host
-                builder_url = fields[1]
-                if '@' in builder_url:
-                    builder = builder_url.split('@')[-1].rstrip('/')
-                else:
-                    builder = builder_url.split('://')[-1].rstrip('/')
-            
-            dep = Dependency(
-                name=name,
-                out_path=path,
-                status=BuildStatus.RUNNING,
-                activity_type=ActivityType.BUILD,
-                started_at=datetime.now(),
-                builder=builder,
-            )
-            self.state.add_dependency(dep)
-            self._activity_map[activity_id] = name
-            self._activity_type_map[activity_id] = ActivityType.BUILD
-            return f"Building {name}"
+                builder = self._normalize_builder(fields[1])
+
+            if self._should_track_activity(name, ActivityType.BUILD, path):
+                dep = Dependency(
+                    name=name,
+                    out_path=path,
+                    status=BuildStatus.RUNNING,
+                    activity_type=ActivityType.BUILD,
+                    started_at=datetime.now(),
+                    builder=builder,
+                )
+                self.state.add_dependency(dep)
+                self._activity_map[activity_id] = name
+                self._activity_type_map[activity_id] = ActivityType.BUILD
+                return f"Building {name}"
+            return None
         
         # Check text for useful activities (works for any type)
         if "building" in text.lower():
@@ -209,23 +248,20 @@ class NixParser:
                 path = match.group(1)
                 name = self._extract_name(path)
                 
-                # Only create if not already tracked
-                if name not in self.state.dependencies:
+                if self._should_track_activity(name, ActivityType.BUILD, path):
                     dep = Dependency(
                         name=name,
                         out_path=path,
                         status=BuildStatus.RUNNING,
                         activity_type=ActivityType.BUILD,
                         started_at=datetime.now(),
+                        builder=self._pending_builders.pop(name, None),
                     )
                     self.state.add_dependency(dep)
                     self._activity_map[activity_id] = name
                     self._activity_type_map[activity_id] = ActivityType.BUILD
-                else:
-                    # Already tracked, just map the activity id
-                    self._activity_map[activity_id] = name
-                    self._activity_type_map[activity_id] = ActivityType.BUILD
-                return f"Building {name}"
+                    return f"Building {name}"
+                return None
         
         elif "downloading" in text.lower() or "fetching" in text.lower():
             # Try to extract path from text or fields
@@ -240,8 +276,7 @@ class NixParser:
             if path:
                 name = self._extract_name(path)
                 
-                # Only create if not already tracked
-                if name not in self.state.dependencies:
+                if self._should_track_activity(name, ActivityType.DOWNLOAD, path):
                     dep = Dependency(
                         name=name,
                         out_path=path if path.startswith('/nix/store') else None,
@@ -250,9 +285,10 @@ class NixParser:
                         started_at=datetime.now(),
                     )
                     self.state.add_dependency(dep)
-                self._activity_map[activity_id] = name
-                self._activity_type_map[activity_id] = ActivityType.DOWNLOAD
-                return f"Downloading {name}"
+                    self._activity_map[activity_id] = name
+                    self._activity_type_map[activity_id] = ActivityType.DOWNLOAD
+                    return f"Downloading {name}"
+                return None
         
         elif "querying info about" in text.lower():
             # Extract store path from text or fields
@@ -265,18 +301,21 @@ class NixParser:
             
             if path:
                 name = self._extract_name(path)
+                self.state.status_message = f"Querying cache for {name}..."
                 
-                dep = Dependency(
-                    name=name,
-                    out_path=path,
-                    status=BuildStatus.RUNNING,
-                    activity_type=ActivityType.DOWNLOAD,
-                    started_at=datetime.now(),
-                )
-                self.state.add_dependency(dep)
-                self._activity_map[activity_id] = name
-                self._activity_type_map[activity_id] = ActivityType.DOWNLOAD
-                return f"Fetching {name}"
+                if self._should_track_activity(name, ActivityType.DOWNLOAD, path):
+                    dep = Dependency(
+                        name=name,
+                        out_path=path,
+                        status=BuildStatus.RUNNING,
+                        activity_type=ActivityType.DOWNLOAD,
+                        started_at=datetime.now(),
+                    )
+                    self.state.add_dependency(dep)
+                    self._activity_map[activity_id] = name
+                    self._activity_type_map[activity_id] = ActivityType.DOWNLOAD
+                    return f"Fetching {name}"
+                return None
         
         elif "copying" in text.lower():
             match = re.search(r"'(/nix/store/[^']+)'", text)
@@ -287,17 +326,20 @@ class NixParser:
                 # Check if upload or download
                 is_upload = "to " in text.lower() or "uploading" in text.lower()
                 
-                dep = Dependency(
-                    name=name,
-                    out_path=path,
-                    status=BuildStatus.RUNNING,
-                    activity_type=ActivityType.UPLOAD if is_upload else ActivityType.DOWNLOAD,
-                    started_at=datetime.now(),
-                )
-                self.state.add_dependency(dep)
-                self._activity_map[activity_id] = name
-                direction = "up" if is_upload else "down"
-                return f"Copying {direction} {name}"
+                activity = ActivityType.UPLOAD if is_upload else ActivityType.DOWNLOAD
+                if self._should_track_activity(name, activity, path):
+                    dep = Dependency(
+                        name=name,
+                        out_path=path,
+                        status=BuildStatus.RUNNING,
+                        activity_type=activity,
+                        started_at=datetime.now(),
+                    )
+                    self.state.add_dependency(dep)
+                    self._activity_map[activity_id] = name
+                    direction = "up" if is_upload else "down"
+                    return f"Copying {direction} {name}"
+                return None
         
         # Track evaluation activities
         if "evaluating" in text.lower():
@@ -308,11 +350,21 @@ class NixParser:
                 if match:
                     deriv = match.group(1).split('/')[-1][:30]
                     self.state.status_message = f"Evaluating {deriv}..."
+            elif text.strip():
+                self.state.status_message = text.strip()[:80]
+            if self.state.status_message:
+                self.state.add_event(self.state.status_message)
             return None  # Don't show evaluation, too noisy
         
         # Track querying activities
         if "querying" in text.lower():
-            self.state.status_message = "Querying cache..."
+            match = re.search(r"'(/nix/store/[^']+)'", text)
+            if match:
+                name = self._extract_name(match.group(1))
+                self.state.status_message = f"Querying cache for {name}..."
+            else:
+                self.state.status_message = "Querying cache..."
+            self.state.add_event(self.state.status_message)
             return None
         
         return None
@@ -443,6 +495,15 @@ class NixParser:
             return name_with_hash
         
         return path
+
+    def _normalize_builder(self, builder: str) -> str:
+        """Normalize builder URLs to a short display name."""
+        builder = builder.rstrip('/')
+        if '://' in builder:
+            builder = builder.split('://', 1)[-1]
+        if '@' in builder:
+            builder = builder.rsplit('@', 1)[-1]
+        return builder
     
     def finish(self) -> None:
         """Mark parsing as complete."""
