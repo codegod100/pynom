@@ -40,6 +40,7 @@ class Dependency:
     progress: float = 0.0  # 0.0 to 1.0 for downloads
     size: Optional[int] = None  # Size in bytes (for downloads)
     downloaded: int = 0  # Bytes downloaded so far
+    log_lines: list[str] = field(default_factory=list)  # Build output lines
     
     @property
     def status_text(self) -> str:

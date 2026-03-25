@@ -328,12 +328,26 @@ class NixParser:
         return None
     
     def _handle_result(self, data: dict) -> Optional[str]:
-        """Handle result JSON message (progress updates)."""
+        """Handle result JSON message (progress updates and log lines)."""
         activity_id = data.get("id")
         result_type = data.get("type", 0)
         fields = data.get("fields", [])
         
-        # Type 106 seems to be file transfer progress
+        # Type 101 = build log lines, fields[0] is the log text
+        # Type 104 = phase names (like "unpackPhase")
+        if result_type in (101, 104) and fields and isinstance(fields[0], str):
+            log_line = fields[0]
+            if activity_id in self._activity_map:
+                name = self._activity_map[activity_id]
+                if name in self.state.dependencies:
+                    dep = self.state.dependencies[name]
+                    # Keep only last 50 log lines
+                    dep.log_lines.append(log_line)
+                    if len(dep.log_lines) > 50:
+                        dep.log_lines = dep.log_lines[-50:]
+            return None
+        
+        # Type 106 = file transfer progress
         # fields[0] = status (100=started, 101=progress, etc)
         # fields[1] = bytes transferred
         

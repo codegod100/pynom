@@ -124,11 +124,30 @@ class BuildDisplay:
             lines.append(" ".join(status_parts))
             lines.append("")
         
-        # Recent completions (last 10)
+        # Recent log lines from running builds
+        log_lines_shown = 0
+        max_log_lines = 15
+        for name in sorted(state.running_builds):
+            dep = state.dependencies.get(name)
+            if dep and dep.log_lines:
+                # Show last few log lines
+                recent_logs = dep.log_lines[-8:]
+                for log in recent_logs:
+                    if log_lines_shown >= max_log_lines:
+                        break
+                    # Truncate long lines
+                    display_log = log[:70] if len(log) > 70 else log
+                    lines.append(f"  [dim]{display_log}[/]")
+                    log_lines_shown += 1
+        
+        if log_lines_shown > 0:
+            lines.append("")
+        
+        # Recent completions (last 5)
         completed = [
             (dep, depth) for dep, depth in state.get_tree()
             if dep.status == BuildStatus.DONE
-        ][-10:]
+        ][-5:]
         
         if completed:
             lines.append("[dim]Completed:[/]")
