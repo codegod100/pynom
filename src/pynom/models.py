@@ -77,6 +77,7 @@ class BuildState:
     dependencies: dict[str, Dependency] = field(default_factory=dict)
     raw_lines: list[str] = field(default_factory=list)
     recent_events: list[str] = field(default_factory=list)
+    scrollback_logs: list[str] = field(default_factory=list)
     started_at: datetime = field(default_factory=datetime.now)
     finished_at: Optional[datetime] = None
     error: Optional[str] = None
@@ -185,6 +186,13 @@ class BuildState:
         self.recent_events.append(event)
         if len(self.recent_events) > 12:
             self.recent_events = self.recent_events[-12:]
+
+    def add_scrollback_log(self, line: str) -> None:
+        """Record a non-structured line to print once above the live box."""
+        line = line.strip()
+        if not line:
+            return
+        self.scrollback_logs.append(line)
 
 
 @dataclass

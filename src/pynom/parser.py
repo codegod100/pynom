@@ -63,6 +63,14 @@ class NixParser:
             "ERROR: ",
         )
         return message.startswith(prefixes)
+
+    def _should_record_scrollback_log(self, message: str) -> bool:
+        """Return True for pass-through lines that belong in TUI scrollback."""
+        if not message.strip():
+            return False
+        if self._is_structured_event(message):
+            return False
+        return True
     
     def parse_line(self, line: str) -> Optional[str]:
         """Parse a line of nix output, return text to display."""
@@ -109,6 +117,8 @@ class NixParser:
         
         if result and self._is_structured_event(result):
             self.state.add_event(result)
+        elif result and self._should_record_scrollback_log(result):
+            self.state.add_scrollback_log(result)
         
         return result
     

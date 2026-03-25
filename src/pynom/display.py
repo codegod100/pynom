@@ -311,6 +311,7 @@ class StreamDisplay:
         state = BuildState()
         printed_log_counts: dict[str, int] = {}
         printed_event_count = 0
+        printed_scrollback_count = 0
         
         with self.display.live_display() as live:
             for output_text, current_state in parse_stream(stream, use_json=self.use_json):
@@ -320,6 +321,11 @@ class StreamDisplay:
                 for event in new_events:
                     live.console.print(event)
                 printed_event_count = len(state.recent_events)
+
+                new_scrollback_logs = state.scrollback_logs[printed_scrollback_count:]
+                for line in new_scrollback_logs:
+                    live.console.print(line)
+                printed_scrollback_count = len(state.scrollback_logs)
                 
                 # Print build logs above the live panel once so they stay in scrollback.
                 for name in sorted(state.dependencies):
