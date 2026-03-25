@@ -123,10 +123,15 @@ def run_nix_command(command: str, args: list[str], use_json: bool = True) -> int
         cmd.extend(rest_args)
         
     else:
-        # Regular nix command
+        # Regular nix command - exec directly for interactive commands
+        if command in ("run", "shell", "develop"):
+            # Don't use TUI for interactive commands
+            cmd = ["nix", command, *args]
+            os.execvp(cmd[0], cmd)
+            return 1
+        
         cmd = ["nix", command]
-        # Don't use JSON logging for 'run' - it swallows app output
-        if use_json and command in ("build", "shell", "develop", "profile"):
+        if use_json and command in ("build", "profile"):
             if "--log-format" not in args:
                 cmd.extend(["--log-format", "internal-json", "-v"])
         cmd.extend(args)
