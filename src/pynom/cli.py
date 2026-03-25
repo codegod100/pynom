@@ -125,7 +125,8 @@ def run_nix_command(command: str, args: list[str], use_json: bool = True) -> int
     else:
         # Regular nix command
         cmd = ["nix", command]
-        if use_json and command in ("build", "shell", "develop", "run", "profile"):
+        # Don't use JSON logging for 'run' - it swallows app output
+        if use_json and command in ("build", "shell", "develop", "profile"):
             if "--log-format" not in args:
                 cmd.extend(["--log-format", "internal-json", "-v"])
         cmd.extend(args)
