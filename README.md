@@ -1,15 +1,15 @@
 # pynom - Python Nix Output Monitor
 
-A Python clone of [nix-output-monitor](https://github.com/maralorn/nix-output-monitor) that provides beautiful, informative terminal output for Nix builds.
+A Python clone of [nix-output-monitor](https://github.com/maralorn/nix-output-monitor) that provides live, informative terminal output for Nix builds and related commands.
 
 ## Features
 
-- **Rich terminal UI** with colors and symbols showing build progress
-- **Build dependency tree** visualization
+- **Live status box** for subcommands like `build`, `profile`, `home`, and `os`
+- **Persistent scrollback logs** for build output and recent activity
 - **Progress tracking** for builds, downloads, and uploads
 - **Time estimates** based on historical build data
 - **JSON log support** for modern `nix build` commands
-- **Drop-in replacement** for `nix build`, `nix shell`, `nix develop`
+- **Drop-in replacement** for `nix build`, `nix profile`, `home-manager`, and `nixos-rebuild`
 
 ## Installation
 
@@ -26,6 +26,15 @@ nix profile install .
 ```bash
 # Instead of: nix build .#something
 pynom build .#something
+
+# Instead of: nix profile upgrade
+pynom profile upgrade hello
+
+# Instead of: home-manager switch
+pynom home switch
+
+# Instead of: nixos-rebuild switch
+pynom os switch
 
 # Instead of: nix shell
 pynom shell nixpkgs#hello
@@ -47,25 +56,18 @@ nix build .#something --log-format internal-json -v 2>&1 | pynom --json
 nixos-rebuild switch 2>&1 | pynom
 ```
 
-## Status Icons
+### Display behavior
 
-| Icon | Meaning |
-|------|---------|
-| ⏵ | Currently building |
-| ✔ | Build completed |
-| ⏸ | Waiting for dependency |
-| ⚠ | Build failed |
-| ↓⏵ | Downloading |
-| ↓✔ | Downloaded |
-| ↑⏵ | Uploading |
-| ⏱︎ | Build time |
-| ∑ | Total time |
+- Subcommands use the live TUI by default.
+- In live TUI mode, the box shows current status and progress.
+- Build logs and recent activity are printed once into scrollback instead of being redrawn inside the box.
+- Pipe mode stays stream-oriented by default; use `pynom --tui` if you want the live box there too.
 
 ## How it works
 
 1. Parses Nix build output (human-readable or JSON format)
 2. Tracks build dependencies and their status
-3. Displays a live-updating terminal UI with progress
+3. Displays a live status box and keeps logs in normal terminal scrollback
 4. Stores build times for future predictions
 
 ## Comparison to original
