@@ -11,11 +11,11 @@ import csv
 
 class BuildStatus(Enum):
     """Status of a build or download."""
-    PENDING = "pending"       # Not started yet
-    RUNNING = "running"       # Currently building/downloading
-    DONE = "done"             # Completed successfully
-    FAILED = "failed"         # Failed
-    WAITING = "waiting"       # Waiting for dependencies
+    PENDING = "pending"
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+    WAITING = "waiting"
 
 
 class ActivityType(Enum):
@@ -28,46 +28,29 @@ class ActivityType(Enum):
 @dataclass
 class Dependency:
     """A single dependency being built/downloaded."""
-    name: str                          # Derivation name
-    out_path: Optional[str] = None     # Output path in /nix/store
+    name: str
+    out_path: Optional[str] = None
     status: BuildStatus = BuildStatus.PENDING
     activity_type: ActivityType = ActivityType.BUILD
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
     duration_ms: Optional[int] = None
-    parent: Optional[str] = None      # Parent derivation name
+    parent: Optional[str] = None
     children: list[str] = field(default_factory=list)
-    progress: float = 0.0             # 0.0 to 1.0 for downloads
-    size: Optional[int] = None        # Size in bytes (for downloads)
-    downloaded: int = 0               # Bytes downloaded so far
+    progress: float = 0.0  # 0.0 to 1.0 for downloads
+    size: Optional[int] = None  # Size in bytes (for downloads)
+    downloaded: int = 0  # Bytes downloaded so far
     
     @property
-    def icon(self) -> str:
-        """Get the status icon for this dependency."""
-        if self.activity_type == ActivityType.DOWNLOAD:
-            return {
-                BuildStatus.RUNNING: "↓⏵",
-                BuildStatus.DONE: "↓✔",
-                BuildStatus.FAILED: "↓⚠",
-                BuildStatus.PENDING: "↓⏸",
-                BuildStatus.WAITING: "↓⏸",
-            }[self.status]
-        elif self.activity_type == ActivityType.UPLOAD:
-            return {
-                BuildStatus.RUNNING: "↑⏵",
-                BuildStatus.DONE: "↑✔",
-                BuildStatus.FAILED: "↑⚠",
-                BuildStatus.PENDING: "↑⏸",
-                BuildStatus.WAITING: "↑⏸",
-            }[self.status]
-        else:
-            return {
-                BuildStatus.RUNNING: "⏵",
-                BuildStatus.DONE: "✔",
-                BuildStatus.FAILED: "⚠",
-                BuildStatus.PENDING: "⏸",
-                BuildStatus.WAITING: "⏸",
-            }[self.status]
+    def status_text(self) -> str:
+        """Get status as simple text."""
+        return {
+            BuildStatus.RUNNING: "running",
+            BuildStatus.DONE: "done",
+            BuildStatus.FAILED: "FAILED",
+            BuildStatus.PENDING: "pending",
+            BuildStatus.WAITING: "waiting",
+        }[self.status]
     
     @property
     def elapsed_seconds(self) -> Optional[float]:
@@ -90,7 +73,7 @@ class Dependency:
 class BuildState:
     """Overall state of a Nix build."""
     dependencies: dict[str, Dependency] = field(default_factory=dict)
-    raw_lines: list[str] = field(default_factory=list)  # Raw output to pass through
+    raw_lines: list[str] = field(default_factory=list)
     started_at: datetime = field(default_factory=datetime.now)
     finished_at: Optional[datetime] = None
     error: Optional[str] = None
@@ -127,7 +110,6 @@ class BuildState:
         """Add a dependency to tracking."""
         self.dependencies[dep.name] = dep
         
-        # Track running activities
         if dep.status == BuildStatus.RUNNING:
             if dep.activity_type == ActivityType.BUILD:
                 self.running_builds.add(dep.name)
@@ -151,7 +133,6 @@ class BuildState:
             if dep.started_at:
                 dep.duration_ms = int((finished_at - dep.started_at).total_seconds() * 1000)
         
-        # Update tracking sets
         if old_status == BuildStatus.RUNNING:
             if dep.activity_type == ActivityType.BUILD:
                 self.running_builds.discard(name)
@@ -182,7 +163,6 @@ class BuildState:
             for child in dep.children:
                 visit(child, depth + 1)
         
-        # Start with roots (dependencies without parents)
         roots = [d for d in self.dependencies.values() if d.parent is None]
         for root in sorted(roots, key=lambda d: d.name):
             visit(root.name, 0)
@@ -247,7 +227,7 @@ class BuildHistory:
                         self._reports[report.name] = []
                     self._reports[report.name].append(report)
         except Exception:
-            pass  # Ignore corrupted history
+            pass
     
     def get_average_time(self, name: str) -> Optional[float]:
         """Get average build time in seconds for a derivation."""
@@ -257,7 +237,6 @@ class BuildHistory:
             return None
         
         reports = self._reports[name]
-        # Use last 5 builds, weighted towards recent
         recent = reports[-5:]
         total_ms = sum(r.duration_ms for r in recent)
         return total_ms / len(recent) / 1000
@@ -272,7 +251,6 @@ class BuildHistory:
             self._reports[name] = []
         self._reports[name].append(report)
         
-        # Save to disk
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         
         with open(self.history_file, "a", newline="") as f:
@@ -301,7 +279,6 @@ class BuildHistory:
             else:
                 unknown += 1
         
-        # If we have unknowns, estimate based on average of known builds
         if unknown > 0 and total_predicted > 0:
             known_avg = total_predicted / max(1, len(pending) - unknown)
             total_predicted += unknown * known_avg

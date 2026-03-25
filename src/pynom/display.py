@@ -8,12 +8,10 @@ from contextlib import contextmanager
 
 from rich.console import Console
 from rich.live import Live
-from rich.table import Table
 from rich.panel import Panel
+from rich.progress import Progress, BarColumn, TextColumn, TimeElapsedColumn, TaskID
+from rich.table import Table
 from rich.text import Text
-from rich.layout import Layout
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
-from rich.style import Style
 
 from pynom.models import BuildState, BuildStatus, ActivityType, BuildHistory
 
@@ -51,123 +49,139 @@ class BuildDisplay:
         return f"{bytes_val:.1f}TB"
     
     def render_state(self, state: BuildState) -> Panel:
-        """Render the build state as a rich panel."""
-        # Create main content
+        """Render the build state as a rich panel with progress bars."""
+        # Create progress bars
+        progress = Progress(
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(bar_width=40),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeElapsedColumn(),
+            expand=False,
+        )
+        
+        # Overall build progress
+        total_tasks = state.total_builds + state.total_downloads
+        done_tasks = state.completed_builds + state.completed_downloads
+        running_tasks = len(state.running_builds) + len(state.running_downloads)
+        
+        if total_tasks > 0:
+            overall_task = progress.add_task(
+                f"[cyan]Overall[/]",
+                total=total_tasks,
+                completed=done_tasks,
+            )
+        
+        # Running builds
+        for name in sorted(state.running_builds):
+            dep = state.dependencies.get(name)
+            if dep:
+                elapsed = dep.elapsed_seconds or 0
+                predicted = self.history.get_average_time(name)
+                
+                if predicted and predicted > 0:
+                    pct = min(elapsed / predicted, 0.99)  # Cap at 99% while running
+                    progress.add_task(
+                        f"  [yellow]{name[:30]}[/]",
+                        total=100,
+                        completed=int(pct * 100),
+                    )
+                else:
+                    # No prediction, show indeterminate
+                    progress.add_task(
+                        f"  [yellow]{name[:30]}[/]",
+                        total=None,
+                    )
+        
+        # Running downloads
+        for name in sorted(state.running_downloads):
+            dep = state.dependencies.get(name)
+            if dep:
+                if dep.size and dep.size > 0:
+                    progress.add_task(
+                        f"  [blue]DL {name[:25]}[/]",
+                        total=dep.size,
+                        completed=dep.downloaded,
+                    )
+                else:
+                    progress.add_task(
+                        f"  [blue]DL {name[:25]}[/]",
+                        total=None,
+                    )
+        
+        # Build progress bar table
         lines: list[str] = []
         
-        # Running builds section
-        if state.running_builds:
-            lines.append("[bold cyan]Building:[/]")
-            for name in sorted(state.running_builds):
-                dep = state.dependencies.get(name)
-                if dep:
-                    elapsed = dep.elapsed_seconds
-                    elapsed_str = self.format_time(elapsed) if elapsed else ""
-                    predicted = self.history.get_average_time(name)
-                    
-                    time_info = ""
-                    if elapsed_str:
-                        time_info = f" [dim]⏱︎{elapsed_str}[/]"
-                        if predicted and elapsed:
-                            remaining = predicted - elapsed
-                            if remaining > 0:
-                                time_info += f" [dim]~{self.format_time(remaining)}[/]"
-                    
-                    lines.append(f"  ⏵ {name}{time_info}")
+        # Header with counts
+        if total_tasks > 0:
+            status_parts = []
+            if state.failed_builds > 0:
+                status_parts.append(f"[red]{state.failed_builds} failed[/]")
+            if running_tasks > 0:
+                status_parts.append(f"[yellow]{running_tasks} running[/]")
+            if done_tasks > 0:
+                status_parts.append(f"[green]{done_tasks} done[/]")
+            
+            lines.append(" ".join(status_parts))
             lines.append("")
         
-        # Running downloads section  
-        if state.running_downloads:
-            lines.append("[bold yellow]Downloading:[/]")
-            for name in sorted(state.running_downloads):
-                dep = state.dependencies.get(name)
-                if dep:
-                    size_info = ""
-                    if dep.size:
-                        size_info = f" ({self.format_size(dep.size)})"
-                    progress_str = ""
-                    if dep.progress > 0:
-                        pct = dep.progress * 100
-                        progress_str = f" [{pct:.0f}%]"
-                    lines.append(f"  ↓⏵ {name}{size_info}{progress_str}")
-            lines.append("")
+        # Recent completions (last 10)
+        completed = [
+            (dep, depth) for dep, depth in state.get_tree()
+            if dep.status == BuildStatus.DONE
+        ][-10:]
         
-        # Build tree (recent completions and waiting)
-        tree = state.get_tree()
-        if tree:
-            visible_deps = [t for t in tree 
-                          if t[0].status in (BuildStatus.DONE, BuildStatus.FAILED, BuildStatus.WAITING)]
-            if visible_deps:
-                lines.append("[bold]Dependencies:[/]")
-                for dep, depth in visible_deps[-20:]:  # Show last 20
-                    indent = "  " * depth
-                    color = {
-                        BuildStatus.DONE: "green",
-                        BuildStatus.FAILED: "red",
-                        BuildStatus.WAITING: "dim",
-                        BuildStatus.PENDING: "dim",
-                        BuildStatus.RUNNING: "cyan",
-                    }[dep.status]
-                    
-                    duration_str = ""
-                    if dep.duration_seconds:
-                        duration_str = f" [dim]⏱︎{self.format_time(dep.duration_seconds)}[/]"
-                    
-                    lines.append(f"  {indent}[{color}]{dep.icon}[/{color}] {dep.name}{duration_str}")
-        
-        # Summary bar
-        summary_parts = []
-        
-        # Total time
-        total_time = self.format_time(state.total_time_seconds)
-        summary_parts.append(f"[bold]∑ {total_time}[/]")
-        
-        # Build counts
-        if state.total_builds > 0:
-            done = state.completed_builds
-            total = state.total_builds
-            running = len(state.running_builds)
-            failed = state.failed_builds
-            
-            if failed > 0:
-                summary_parts.append(f"[red]⚠ {failed} failed[/]")
-            
-            if running > 0:
-                summary_parts.append(f"[cyan]⏵ {running} building[/]")
-            
-            summary_parts.append(f"[green]✔ {done}/{total}[/]")
-        
-        # Download counts
-        if state.completed_downloads > 0:
-            summary_parts.append(f"[yellow]↓✔ {state.completed_downloads}[/]")
-        
-        # Prediction
-        predicted = self.history.predict_remaining(state)
-        if predicted and predicted > 1:
-            summary_parts.append(f"[dim]~{self.format_time(predicted)} left[/]")
+        if completed:
+            lines.append("[dim]Completed:[/]")
+            for dep, depth in completed:
+                duration = f" {self.format_time(dep.duration_seconds)}" if dep.duration_seconds else ""
+                lines.append(f"  [dim]{dep.name}{duration}[/]")
         
         # Error display
         if state.error:
             lines.append("")
-            lines.append(f"[bold red]Error:[/] {state.error}")
+            lines.append(f"[red bold]Error:[/] {state.error}")
         
-        # Combine
-        content = "\n".join(lines) if lines else "[dim]Waiting for build output...[/]"
-        summary = " │ ".join(summary_parts) if summary_parts else ""
+        # Combine into panel
+        if state.finished_at and total_tasks == 0:
+            # Build finished but no tracked items (cached or fast)
+            content = "[dim]Build completed (cached or no builds tracked)[/]"
+        elif total_tasks == 0 and not state.error:
+            content = "[dim]Waiting for build output...[/]"
+        else:
+            # Build content with progress bar
+            from rich.layout import Layout
+            from rich.text import Text
+            
+            content_table = Table.grid(padding=0)
+            content_table.add_column()
+            
+            # Add progress renderable
+            if total_tasks > 0 or running_tasks > 0:
+                content_table.add_row(progress)
+                content_table.add_row("")
+            
+            # Add text lines
+            for line in lines:
+                content_table.add_row(Text.from_markup(line))
+            
+            content = content_table
         
-        # Create panel
+        # Summary title
+        elapsed = self.format_time(state.total_time_seconds)
+        title = f" {elapsed} "
+        
+        if state.failed_builds > 0:
+            title = f"[red] FAIL [/]{title}"
+        elif state.finished_at:
+            title = f"[green] DONE [/]{title}"
+        
         return Panel(
             content,
-            title=summary or "pynom",
+            title=title,
             title_align="left",
-            border_style="blue",
+            border_style="blue" if not state.error else "red",
             padding=(0, 1),
         )
-    
-    def render_output(self, text: str, state: BuildState) -> Panel:
-        """Render pass-through output with status panel."""
-        content = self.render_state(state)
-        return content
     
     @contextmanager  
     def live_display(self):
@@ -175,7 +189,7 @@ class BuildDisplay:
         live = Live(
             console=self.console,
             refresh_per_second=20,
-            transient=False,  # Keep output after done
+            transient=False,
         )
         live.start()
         try:
@@ -219,19 +233,12 @@ class StreamDisplay:
         
         state = None
         
-        # In pass-through mode, we print the output and periodically
-        # print a status line
         for output_text, current_state in parse_stream(stream, use_json=self.use_json):
             state = current_state
             
-            # Print pass-through output
             if self.show_pass_through and output_text:
                 self.console.print(output_text)
-            
-            # Periodically show status (every N lines or seconds)
-            # For now, just track state
         
-        # Print final summary
         if state:
             self.display.print_final(state)
         

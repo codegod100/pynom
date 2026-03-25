@@ -61,7 +61,7 @@ class NixParser:
                 self.state.add_dependency(dep)
                 self.state.running_builds.add(name)
             
-            return f"⏵ Building {name}"
+            return f"Building {name}"
         
         # Check for downloads
         match = self.DOWNLOAD_RE.search(line)
@@ -79,7 +79,7 @@ class NixParser:
                 )
                 self.state.add_dependency(dep)
             
-            return f"↓⏵ Downloading {name}"
+            return f"Downloading {name}"
         
         # Check for built outputs
         match = self.BUILT_RE.match(line)
@@ -161,7 +161,7 @@ class NixParser:
             self.state.add_dependency(dep)
             self._activity_map[activity_id] = name
             self._activity_type_map[activity_id] = ActivityType.BUILD
-            return f"⏵ Building {name}"
+            return f"Building {name}"
         
         # Check text for useful activities (works for any type)
         if "building" in text.lower():
@@ -181,7 +181,7 @@ class NixParser:
                 self.state.add_dependency(dep)
                 self._activity_map[activity_id] = name
                 self._activity_type_map[activity_id] = ActivityType.BUILD
-                return f"⏵ Building {name}"
+                return f"Building {name}"
         
         elif "downloading" in text.lower() or "fetching" in text.lower():
             # Try to extract path from text or fields
@@ -206,7 +206,7 @@ class NixParser:
                 self.state.add_dependency(dep)
                 self._activity_map[activity_id] = name
                 self._activity_type_map[activity_id] = ActivityType.DOWNLOAD
-                return f"↓⏵ Downloading {name}"
+                return f"Downloading {name}"
         
         elif "querying info about" in text.lower():
             # Extract store path from text or fields
@@ -230,7 +230,7 @@ class NixParser:
                 self.state.add_dependency(dep)
                 self._activity_map[activity_id] = name
                 self._activity_type_map[activity_id] = ActivityType.DOWNLOAD
-                return f"↓⏵ Fetching {name}"
+                return f"Fetching {name}"
         
         elif "copying" in text.lower():
             match = re.search(r"'(/nix/store/[^']+)'", text)
@@ -250,7 +250,8 @@ class NixParser:
                 )
                 self.state.add_dependency(dep)
                 self._activity_map[activity_id] = name
-                return f"{'↑' if is_upload else '↓'}⏵ Copying {name}"
+                direction = "up" if is_upload else "down"
+                return f"Copying {direction} {name}"
         
         # Track evaluation activities
         if "evaluating" in text.lower():
@@ -284,14 +285,14 @@ class NixParser:
             del self._activity_map[activity_id]
             self._activity_type_map.pop(activity_id, None)
             
-            icon = "✔" if status == BuildStatus.DONE else "⚠"
-            type_icon = ""
+            status_str = "done" if status == BuildStatus.DONE else "FAILED"
+            type_prefix = ""
             if dep.activity_type == ActivityType.DOWNLOAD:
-                type_icon = "↓"
+                type_prefix = "DL "
             elif dep.activity_type == ActivityType.UPLOAD:
-                type_icon = "↑"
+                type_prefix = "UP "
             
-            return f"{type_icon}{icon} {name}"
+            return f"{type_prefix}{status_str} {name}"
         
         return None
     
@@ -334,7 +335,7 @@ class NixParser:
         # Level 0 = error, level 1-3 = warnings
         if level <= 0 and msg:
             self.state.error = msg
-            return f"⚠ {msg}"
+            return f"ERROR: {msg}"
         
         # Level 3 = info about paths
         if level == 3 and "will be fetched" in msg:
@@ -343,7 +344,7 @@ class NixParser:
             if match:
                 path = match.group(1)
                 name = self._extract_name(path)
-                return f"↓ Fetching {name}"
+                return f"Fetching {name}"
         
         # Level 4 = debug, too verbose
         
